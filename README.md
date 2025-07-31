@@ -8,3 +8,5 @@ this mod works by applying a manager aproach to the task manager which means tha
 this approach makes sure that the server isnt at half resource usage while at 8tps.
 
 feel free to suport me on patreon to also get exclusive benefts: https://www.patreon.com/tribulla
+
+(the code was written by human but then formatted by AI to add comments and make the code look good)
