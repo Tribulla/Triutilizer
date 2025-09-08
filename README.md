@@ -1,11 +1,16 @@
 # Triutilizer
-this is a mod is for servers that reworks how minecraft uses CPU resources to improve performance on multicore servers.
+Triutilizer adds a prioritized worker pool to run CPU-heavy tasks in parallel on multicore servers. It keeps world access on the main thread and only parallelizes pure computation, helping compatible features finish faster.
 
-NB: this mod is made to run ONLY ON SERVERS and not on client so DO NOT run it on client because it has not been tested and might cause file corruption. if you use the stats command and see that the entity que is full and skiping tasks then dont panic because it is normal and actually improves performance (I have no clue how).
+Info for nerds:
+Uses a fixed-size ThreadPoolExecutor with a PriorityBlockingQueue; higher-priority tasks run first.
+Tasks complete as CompletableFutures; any game-interacting completion runs on the main thread.
+Utilities: mapParallel, mapChunked, cancellable tasks, and range-parallel loops for CPU-bound work.
+Does not alter the vanilla tick loop, chunk loading, or Forge’s scheduler.
 
-info for nerds:
-this mod works by applying a manager aproach to the task manager which means that there is one manager thread that takes a task from the que and gives it to a worker thread to complete after which the worker thread completes the task and sends it back to the main thread to be loaded.
-this approach makes sure that the server isnt at half resource usage while at 8tps.
+servers this mod has been deployed in and monitored by the developer:
+VSSMP - ended
+TDI (the divided isles) - https://discord.gg/P6VTrethrk
+CCW (create constant warfare) - https://discord.gg/wgFHd3VaNx
 
 feel free to suport me on patreon to also get exclusive benefts: https://www.patreon.com/tribulla
 

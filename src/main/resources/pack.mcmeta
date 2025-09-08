@@ -1,6 +1,8 @@
 {
-    "pack": {
-        "description": "Resources for Server CPU Utilization Manager",
-        "pack_format": 15
-    }
+  "pack": {
+    "description": {
+      "text": "${mod_id} resources"
+    },
+    "pack_format": 15
+  }
 }
