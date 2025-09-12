@@ -1,4 +1,8 @@
 # Triutilizer
+
+I just found out the production version of the mod does not work properly so currently the mod does nothing.
+(thank you very much JTK222 | Lukas for letting me know).
+
 Triutilizer adds a prioritized worker pool to run CPU-heavy tasks in parallel on multicore servers. It keeps world access on the main thread and only parallelizes pure computation, helping compatible features finish faster.
 
 Info for nerds:
