@@ -1,0 +1,615 @@
+================================================================================
+                    TRIUTILIZER API DOCUMENTATION
+                         Version 1.0
+                    Last Updated: November 2025
+================================================================================
+
+OVERVIEW
+--------
+Triutilizer provides a high-performance, priority-based multithreading system for
+Minecraft Forge mods. It allows you to offload CPU-intensive computations to a
+worker thread pool while keeping all Minecraft game state access on the main thread.
+
+IMPORTANT: Never access Minecraft world state, entities, or blocks from worker
+threads. Use MainThread.execute() to schedule game state access back to the main
+thread.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. Getting Started
+2. TaskManager - Core Multithreading API
+3. Priority Levels
+4. Cancellable Tasks
+5. MainThread Utility
+6. CompatContext & Addon System
+7. Configuration
+8. Statistics & Monitoring
+9. Best Practices
+10. Common Patterns & Examples
+
+================================================================================
+1. GETTING STARTED
+================================================================================
+
+ADDING TRIUTILIZER AS A DEPENDENCY
+-----------------------------------
+Add to your mod's mods.toml:
+
+[[dependencies.yourmodid]]
+    modId="triutilizer"
+    mandatory=true
+    versionRange="[1.0,)"
+    ordering="AFTER"
+    side="BOTH"
+
+
+BASIC USAGE
+-----------
+Import the classes:
+    import com.triutilizer.core.concurrency.TaskManager;
+    import com.triutilizer.core.concurrency.Priority;
+    import com.triutilizer.core.util.MainThread;
+
+Submit a simple task:
+    TaskManager.submit(() -> {
+        // Your CPU-heavy computation here
+        return computeResult();
+    }).thenAccept(result -> {
+        // This runs back on the main thread
+        MainThread.execute(() -> {
+            // Safe to access game state here
+            world.setBlock(pos, state);
+        });
+    });
+
+
+================================================================================
+2. TASKMANAGER - CORE MULTITHREADING API
+================================================================================
+
+CLASS: com.triutilizer.core.concurrency.TaskManager
+
+All methods are static and thread-safe. The TaskManager is automatically
+initialized when your mod loads.
+
+-----------------------------------
+METHOD: submit(Callable<T> callable)
+-----------------------------------
+Submits a task with NORMAL priority.
+
+Returns: CompletableFuture<T>
+
+Example:
+    CompletableFuture<Integer> future = TaskManager.submit(() -> {
+        return expensiveCalculation();
+    });
+    
+    future.thenAccept(result -> {
+        System.out.println("Result: " + result);
+    });
+
+
+-----------------------------------
+METHOD: submit(Callable<T> callable, Priority priority)
+-----------------------------------
+Submits a task with specified priority.
+
+Parameters:
+    - callable: The computation to execute
+    - priority: Priority.LOW, NORMAL, HIGH, or CRITICAL
+
+Returns: CompletableFuture<T>
+
+Example:
+    TaskManager.submit(() -> {
+        return criticalComputation();
+    }, Priority.CRITICAL);
+
+
+-----------------------------------
+METHOD: run(Runnable runnable)
+METHOD: run(Runnable runnable, Priority priority)
+-----------------------------------
+Submits a task that doesn't return a value.
+
+Returns: CompletableFuture<Void>
+
+Example:
+    TaskManager.run(() -> {
+        processLargeDataset();
+    }, Priority.HIGH);
+
+
+-----------------------------------
+METHOD: submitCancellable(Callable<T> callable, Priority priority)
+-----------------------------------
+Submits a task that can be cancelled.
+
+Returns: CancellableTask<T>
+
+Example:
+    CancellableTask<List<Block>> task = TaskManager.submitCancellable(() -> {
+        return scanForBlocks();
+    }, Priority.NORMAL);
+    
+    // Later, if needed:
+    if (shouldCancel) {
+        task.cancel();
+    }
+    
+    task.future().thenAccept(blocks -> {
+        // Process results if not cancelled
+    });
+
+
+-----------------------------------
+METHOD: mapParallel(Collection<T> input, Function<T, R> fn)
+-----------------------------------
+Processes a collection in parallel, applying a function to each element.
+
+Returns: CompletableFuture<List<R>>
+
+Example:
+    List<ChunkPos> chunks = getChunksToProcess();
+    
+    TaskManager.mapParallel(chunks, chunk -> {
+        return analyzeChunk(chunk);
+    }).thenAccept(results -> {
+        MainThread.execute(() -> {
+            // Update game state with results
+            applyResults(results);
+        });
+    });
+
+
+-----------------------------------
+METHOD: forRange(long start, long end, LongConsumer body)
+METHOD: forRange(long start, long end, LongConsumer body, Priority priority)
+-----------------------------------
+Parallel numeric range iteration. Automatically splits work across available threads.
+
+Returns: CompletableFuture<Void>
+
+Example:
+    // Process 1 million items in parallel
+    TaskManager.forRange(0, 1_000_000, i -> {
+        processItem(i);
+    }).thenRun(() -> {
+        System.out.println("All items processed!");
+    });
+
+
+-----------------------------------
+METHOD: mapChunked(List<T> input, int minChunkSize, Function<List<T>, R> fn)
+METHOD: mapChunked(List<T> input, int minChunkSize, Function<List<T>, R> fn, Priority priority)
+-----------------------------------
+Processes a list in parallel chunks to reduce overhead. Instead of creating one
+future per element, creates one future per chunk.
+
+Parameters:
+    - input: The list to process
+    - minChunkSize: Minimum size of each chunk
+    - fn: Function that processes a chunk and returns a result
+
+Returns: CompletableFuture<List<R>>
+
+Example:
+    List<Entity> entities = getEntities();
+    
+    // Process entities in chunks of at least 100
+    TaskManager.mapChunked(entities, 100, chunk -> {
+        return analyzeEntityChunk(chunk);
+    }).thenAccept(chunkResults -> {
+        combineResults(chunkResults);
+    });
+
+
+-----------------------------------
+METHOD: sequence(List<CompletableFuture<T>> futures)
+-----------------------------------
+Waits for all futures to complete and collects their results into a list.
+
+Returns: CompletableFuture<List<T>>
+
+Example:
+    List<CompletableFuture<Integer>> futures = new ArrayList<>();
+    for (int i = 0; i < 10; i++) {
+        futures.add(TaskManager.submit(() -> compute()));
+    }
+    
+    TaskManager.sequence(futures).thenAccept(results -> {
+        System.out.println("All completed: " + results);
+    });
+
+
+-----------------------------------
+METHOD: getStats()
+-----------------------------------
+Returns statistics about the thread pool.
+
+Returns: TaskManager.Stats
+
+Example:
+    TaskManager.Stats stats = TaskManager.getStats();
+    System.out.println("Active threads: " + stats.active);
+    System.out.println("Queue size: " + stats.queueSize);
+    System.out.println("Completed: " + stats.completed);
+
+
+================================================================================
+3. PRIORITY LEVELS
+================================================================================
+
+CLASS: com.triutilizer.core.concurrency.Priority (enum)
+
+Priority levels determine task execution order. Higher priority tasks run first.
+
+Available Priorities:
+    - Priority.LOW (0)       - Background tasks, cleanup
+    - Priority.NORMAL (1)    - Default priority for most tasks
+    - Priority.HIGH (2)      - Important computations
+    - Priority.CRITICAL (3)  - Urgent tasks that must run immediately
+
+Usage Guidelines:
+    - Use NORMAL for most tasks
+    - Use HIGH for player-facing features that need responsiveness
+    - Use CRITICAL sparingly (e.g., preventing server freezes)
+    - Use LOW for background tasks that can be delayed
+
+Example:
+    // Background cleanup (can wait)
+    TaskManager.run(() -> cleanupOldData(), Priority.LOW);
+    
+    // Normal game logic
+    TaskManager.submit(() -> calculatePath(), Priority.NORMAL);
+    
+    // Player-facing UI update
+    TaskManager.submit(() -> generatePreview(), Priority.HIGH);
+    
+    // Emergency computation to prevent lag
+    TaskManager.submit(() -> quickFix(), Priority.CRITICAL);
+
+
+================================================================================
+4. CANCELLABLE TASKS
+================================================================================
+
+CLASS: com.triutilizer.core.concurrency.CancellableTask<T>
+
+Some tasks may need to be cancelled if they're no longer needed (e.g., player
+disconnected, chunk unloaded, etc.).
+
+METHODS:
+    - cancel() -> boolean        : Cancels the task
+    - isCancelled() -> boolean   : Checks if cancelled
+    - future() -> CompletableFuture<T> : Gets the result future
+
+Example - Basic Cancellation:
+    CancellableTask<Result> task = TaskManager.submitCancellable(() -> {
+        return longComputation();
+    }, Priority.NORMAL);
+    
+    // Cancel if player logs out
+    player.onDisconnect(() -> task.cancel());
+
+
+Example - Checking Cancellation in Long Tasks:
+    CancellableTask<List<Block>> task = TaskManager.submitCancellable(() -> {
+        List<Block> results = new ArrayList<>();
+        for (int i = 0; i < 1000000; i++) {
+            if (Thread.interrupted()) {
+                return results; // Exit early if cancelled
+            }
+            results.add(processBlock(i));
+        }
+        return results;
+    }, Priority.NORMAL);
+
+
+================================================================================
+5. MAINTHREAD UTILITY
+================================================================================
+
+CLASS: com.triutilizer.core.util.MainThread
+
+CRITICAL: Never access Minecraft game state from worker threads!
+Always use MainThread.execute() to schedule game state operations.
+
+-----------------------------------
+METHOD: execute(Runnable r)
+-----------------------------------
+Schedules a task to run on the Minecraft server thread.
+
+Example:
+    TaskManager.submit(() -> {
+        // Safe: Pure computation, no game state
+        int result = performCalculation();
+        
+        // UNSAFE: Don't access world here!
+        // world.setBlock(pos, state); // WRONG!
+        
+        // CORRECT: Schedule it on main thread
+        MainThread.execute(() -> {
+            world.setBlock(pos, state);
+        });
+        
+        return result;
+    });
+
+
+Complete Pattern:
+    TaskManager.submit(() -> {
+        // 1. Heavy computation on worker thread
+        List<BlockPos> positions = findOptimalPositions();
+        return positions;
+        
+    }).thenAccept(positions -> {
+        // 2. Schedule game state changes on main thread
+        MainThread.execute(() -> {
+            for (BlockPos pos : positions) {
+                world.setBlock(pos, Blocks.STONE.defaultBlockState());
+            }
+        });
+    });
+
+
+================================================================================
+6. COMPATCONTEXT & ADDON SYSTEM
+================================================================================
+
+Triutilizer provides an addon system for other mods to integrate with it.
+
+CREATING AN ADDON
+-----------------
+Implement the TriutilizerAddon interface:
+
+    package com.yourmod.integration;
+    
+    import com.triutilizer.core.compat.TriutilizerAddon;
+    import com.triutilizer.core.compat.CompatContext;
+    import net.minecraft.server.MinecraftServer;
+    
+    public class YourModIntegration implements TriutilizerAddon {
+        @Override
+        public String id() {
+            return "yourmod";
+        }
+        
+        @Override
+        public void onRegister(CompatContext ctx) {
+            // Called when addon is registered
+            // You can request thread caps here if needed
+            // ctx.requestSingleThread("YourMod requires single-threaded operation");
+        }
+        
+        @Override
+        public void onServerAboutToStart(MinecraftServer server, CompatContext ctx) {
+            // Called when server is starting
+        }
+        
+        @Override
+        public void onServerStopping(MinecraftServer server, CompatContext ctx) {
+            // Called when server is stopping
+        }
+    }
+
+
+REGISTERING YOUR ADDON
+-----------------------
+In your mod's constructor or initialization:
+
+    import com.triutilizer.core.compat.TriutilizerAPI;
+    
+    public YourMod() {
+        TriutilizerAPI.registerAddon(new YourModIntegration());
+    }
+
+
+REQUESTING THREAD CAPS
+-----------------------
+If your mod has compatibility issues with multithreading:
+
+    @Override
+    public void onRegister(CompatContext ctx) {
+        // Request single-threaded mode
+        ctx.requestSingleThread("YourMod modifies thread-unsafe structures");
+        
+        // Or cap to specific number
+        ctx.setThreadCap(2, "YourMod works best with max 2 threads");
+    }
+
+
+================================================================================
+7. CONFIGURATION
+================================================================================
+
+Triutilizer can be configured via config file or system properties.
+
+CONFIG FILE
+-----------
+Located at: config/triutilizer-common.toml
+
+Settings:
+    threads = 7
+        Number of worker threads (default: CPU cores - 1)
+        
+    respectCompatCaps = true
+        Whether to respect thread caps requested by addon mods
+
+
+SYSTEM PROPERTIES
+-----------------
+Can be set via JVM arguments:
+
+    -Dtriutilizer.threads=4
+        Override thread count
+
+
+================================================================================
+8. STATISTICS & MONITORING
+================================================================================
+
+You can monitor TaskManager performance:
+
+    TaskManager.Stats stats = TaskManager.getStats();
+    
+    System.out.println("Thread Pool Status:");
+    System.out.println("  Threads: " + stats.threads);
+    System.out.println("  Active: " + stats.active);
+    System.out.println("  Queue Size: " + stats.queueSize);
+    System.out.println("  Submitted: " + stats.submitted);
+    System.out.println("  Completed: " + stats.completed);
+    
+    for (TaskManager.WorkerSnapshot worker : stats.workers) {
+        System.out.println("Worker " + worker.name);
+        System.out.println("  Running: " + worker.running);
+        System.out.println("  Utilization: " + worker.utilizationPct + "%");
+    }
+
+
+Enable Debug Mode:
+    TaskManager.setDebug(true);
+
+
+================================================================================
+9. BEST PRACTICES
+================================================================================
+
+DO:
+✓ Use Triutilizer for CPU-intensive calculations
+✓ Use MainThread.execute() for ALL game state access
+✓ Use appropriate priority levels
+✓ Cancel tasks that are no longer needed
+✓ Handle exceptions in your tasks
+✓ Use mapChunked for large collections to reduce overhead
+
+DON'T:
+✗ Don't access world, entities, or blocks from worker threads
+✗ Don't use CRITICAL priority for everything
+✗ Don't block worker threads with Thread.sleep() or locks
+✗ Don't forget to handle CompletableFuture exceptions
+✗ Don't create infinite loops in tasks
+
+
+THREAD SAFETY CHECKLIST:
+    [ ] Is this computation pure (no game state)?
+    [ ] Do I return data instead of modifying state?
+    [ ] Do I use MainThread.execute() for game state changes?
+    [ ] Have I tested with multiple threads?
+
+
+================================================================================
+10. COMMON PATTERNS & EXAMPLES
+================================================================================
+
+PATTERN 1: Parallel Chunk Analysis
+------------------------------------
+    List<ChunkPos> chunks = getChunksInRadius(center, 10);
+    
+    TaskManager.mapParallel(chunks, chunkPos -> {
+        // Analyze chunk data (read-only)
+        return analyzeChunk(chunkPos);
+    }).thenAccept(results -> {
+        MainThread.execute(() -> {
+            // Apply changes to world
+            applyAnalysisResults(results);
+        });
+    });
+
+
+PATTERN 2: Progressive Computation with Cancellation
+-----------------------------------------------------
+    CancellableTask<List<Path>> pathfinding = 
+        TaskManager.submitCancellable(() -> {
+            List<Path> paths = new ArrayList<>();
+            for (Entity entity : entities) {
+                if (Thread.interrupted()) break;
+                paths.add(findPath(entity));
+            }
+            return paths;
+        }, Priority.HIGH);
+    
+    // Cancel if no longer needed
+    if (playerLeft) pathfinding.cancel();
+
+
+PATTERN 3: Batch Processing with Chunking
+------------------------------------------
+    List<BlockPos> positions = getAllPositions(); // 100,000 positions
+    
+    TaskManager.mapChunked(positions, 1000, chunk -> {
+        // Process 1000 positions at a time
+        return processChunk(chunk);
+    }).thenAccept(results -> {
+        System.out.println("Processed " + results.size() + " chunks");
+    });
+
+
+PATTERN 4: Error Handling
+--------------------------
+    TaskManager.submit(() -> {
+        return riskyComputation();
+    }).exceptionally(ex -> {
+        System.err.println("Task failed: " + ex.getMessage());
+        return defaultValue(); // Fallback value
+    }).thenAccept(result -> {
+        useResult(result);
+    });
+
+
+PATTERN 5: Coordinating Multiple Tasks
+---------------------------------------
+    CompletableFuture<A> taskA = TaskManager.submit(() -> computeA());
+    CompletableFuture<B> taskB = TaskManager.submit(() -> computeB());
+    CompletableFuture<C> taskC = TaskManager.submit(() -> computeC());
+    
+    CompletableFuture.allOf(taskA, taskB, taskC).thenRun(() -> {
+        A a = taskA.join();
+        B b = taskB.join();
+        C c = taskC.join();
+        combinResults(a, b, c);
+    });
+
+
+PATTERN 6: Parallel Range Processing
+-------------------------------------
+    // Process 1 million items with automatic work distribution
+    TaskManager.forRange(0, 1_000_000, i -> {
+        processItem(i);
+    }, Priority.NORMAL).thenRun(() -> {
+        MainThread.execute(() -> {
+            notifyCompletion();
+        });
+    });
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Problem: ConcurrentModificationException
+Solution: Never modify game state from worker threads. Use MainThread.execute()
+
+Problem: Tasks not executing
+Solution: Check TaskManager.getStats() to see queue size. May need more threads.
+
+Problem: Server lag despite multithreading
+Solution: Ensure you're not creating too many small tasks. Use mapChunked().
+
+Problem: Tasks cancelled unexpectedly
+Solution: Check if thread interruption is occurring. Handle InterruptedException.
+
+
+================================================================================
+SUPPORT & RESOURCES
+================================================================================
+
+GitHub: https://github.com/Tribulla/Triutilizer
+Patreon: https://www.patreon.com/tribulla
+
+For more examples, see the source code in the repository.
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

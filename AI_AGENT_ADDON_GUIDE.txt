@@ -1,0 +1,878 @@
+================================================================================
+              AI AGENT GUIDE: DEVELOPING TRIUTILIZER ADDONS
+                         Version 2.1.a
+              For AI Coding Assistants & Automated Tools
+                    Last Updated: November 2025
+================================================================================
+
+AUDIENCE
+--------
+This document is specifically designed for AI agents (like GitHub Copilot, 
+ChatGPT, Claude, etc.) that are assisting developers in creating Minecraft Forge
+mods that integrate with Triutilizer.
+
+PURPOSE
+-------
+This guide provides structured instructions, code templates, and validation
+checklists to help AI agents generate correct, safe, and efficient code for
+Triutilizer addons.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. Critical Safety Rules
+2. Architecture Overview
+3. Code Generation Templates
+4. Validation Checklist
+5. Common Patterns
+6. Error Prevention
+7. Testing & Verification
+8. Complete Example Projects
+
+================================================================================
+1. CRITICAL SAFETY RULES
+================================================================================
+
+RULE 1: THREAD SAFETY IS MANDATORY
+-----------------------------------
+NEVER generate code that accesses Minecraft game state from worker threads.
+
+ALWAYS wrap game state access in MainThread.execute():
+    ✓ CORRECT:
+        TaskManager.submit(() -> {
+            int result = compute();
+            MainThread.execute(() -> world.setBlock(pos, state));
+            return result;
+        });
+    
+    ✗ WRONG:
+        TaskManager.submit(() -> {
+            world.setBlock(pos, state); // UNSAFE!
+            return compute();
+        });
+
+Game state includes:
+    - World, Level, ServerLevel
+    - BlockState, Block placement/removal
+    - Entity creation, modification, or queries
+    - Chunk loading/unloading
+    - Player data access
+    - Inventory modifications
+    - Dimension operations
+
+
+RULE 2: IMPORTS MUST BE CORRECT
+--------------------------------
+When generating addon code, always include these imports:
+
+For basic addon:
+    import com.triutilizer.core.compat.TriutilizerAddon;
+    import com.triutilizer.core.compat.CompatContext;
+    import net.minecraft.server.MinecraftServer;
+
+For using TaskManager:
+    import com.triutilizer.core.concurrency.TaskManager;
+    import com.triutilizer.core.concurrency.Priority;
+    import com.triutilizer.core.util.MainThread;
+    import java.util.concurrent.CompletableFuture;
+
+For addon registration:
+    import com.triutilizer.core.compat.TriutilizerAPI;
+
+
+RULE 3: DEPENDENCY DECLARATION
+-------------------------------
+Always tell the user to add this to their mods.toml:
+
+[[dependencies.yourmodid]]
+    modId="triutilizer"
+    mandatory=true
+    versionRange="[1.0,)"
+    ordering="AFTER"
+    side="BOTH"
+
+
+================================================================================
+2. ARCHITECTURE OVERVIEW
+================================================================================
+
+TRIUTILIZER COMPONENT HIERARCHY
+--------------------------------
+1. TriutilizerMod (Entry point)
+   └─> TriutilizerAPI (Addon registry)
+       ├─> CompatContext (Thread cap management)
+       └─> TriutilizerAddon (Your integration interface)
+   
+2. TaskManager (Multithreading system)
+   ├─> Priority (Task prioritization)
+   ├─> CancellableTask (Cancellable operations)
+   └─> MainThread (Safe game state access)
+
+3. Your Mod
+   └─> YourAddon implements TriutilizerAddon
+       └─> Uses TaskManager for computations
+
+
+INITIALIZATION FLOW
+-------------------
+1. Forge loads Triutilizer
+2. TriutilizerMod constructor runs
+3. TriutilizerAPI.initAndAutoDetect() is called
+4. Your mod loads
+5. Your mod constructor calls TriutilizerAPI.registerAddon(new YourAddon())
+6. YourAddon.onRegister() is called
+7. Server starts
+8. YourAddon.onServerAboutToStart() is called
+9. ... server runs ...
+10. Server stops
+11. YourAddon.onServerStopping() is called
+
+
+================================================================================
+3. CODE GENERATION TEMPLATES
+================================================================================
+
+TEMPLATE 1: BASIC ADDON INTEGRATION
+------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this template when user wants basic Triutilizer
+ * integration without special requirements.
+ */
+
+package com.example.yourmod.integration;
+
+import com.triutilizer.core.compat.TriutilizerAddon;
+import com.triutilizer.core.compat.CompatContext;
+import net.minecraft.server.MinecraftServer;
+
+public class YourModTriutilizerAddon implements TriutilizerAddon {
+    
+    @Override
+    public String id() {
+        return "yourmod"; // REPLACE with actual mod ID
+    }
+    
+    @Override
+    public void onRegister(CompatContext ctx) {
+        // Called when addon is registered during mod loading
+        // Request thread caps here if needed
+    }
+    
+    @Override
+    public void onServerAboutToStart(MinecraftServer server, CompatContext ctx) {
+        // Called when server is about to start
+        // Initialize server-side resources here
+    }
+    
+    @Override
+    public void onServerStopping(MinecraftServer server, CompatContext ctx) {
+        // Called when server is stopping
+        // Cleanup resources here
+    }
+}
+
+// REGISTRATION (in your mod's main class constructor):
+// TriutilizerAPI.registerAddon(new YourModTriutilizerAddon());
+
+
+TEMPLATE 2: ADDON WITH THREAD CAP REQUEST
+------------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this when the user's mod has thread-safety issues
+ * and needs to limit Triutilizer's thread count.
+ */
+
+@Override
+public void onRegister(CompatContext ctx) {
+    // Request single-threaded mode for safety
+    ctx.requestSingleThread("YourMod has thread-unsafe operations");
+    
+    // OR request specific thread count
+    // ctx.setThreadCap(2, "YourMod works best with 2 threads");
+}
+
+
+TEMPLATE 3: SIMPLE PARALLEL COMPUTATION
+----------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this pattern when user wants to parallelize
+ * a simple computation that doesn't touch game state.
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+import java.util.concurrent.CompletableFuture;
+
+public CompletableFuture<Integer> computeSomething() {
+    return TaskManager.submit(() -> {
+        // Pure computation - safe to run in parallel
+        int result = 0;
+        for (int i = 0; i < 1000000; i++) {
+            result += Math.sqrt(i);
+        }
+        return result;
+    });
+}
+
+
+TEMPLATE 4: COMPUTATION + GAME STATE UPDATE
+--------------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this pattern when user needs to compute something
+ * and then update the game world with the results.
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+import com.triutilizer.core.util.MainThread;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+
+public void processAndUpdate(Level level, BlockPos pos) {
+    TaskManager.submit(() -> {
+        // Step 1: Heavy computation (safe in parallel)
+        BlockState newState = calculateOptimalState(pos);
+        return newState;
+        
+    }).thenAccept(state -> {
+        // Step 2: Update game state (must be on main thread)
+        MainThread.execute(() -> {
+            level.setBlock(pos, state, 3);
+        });
+    });
+}
+
+
+TEMPLATE 5: PARALLEL COLLECTION PROCESSING
+-------------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this when user wants to process a collection
+ * of items in parallel.
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+import java.util.List;
+
+public void processMultipleItems(List<ItemData> items) {
+    TaskManager.mapParallel(items, item -> {
+        // Process each item in parallel
+        return analyzeItem(item);
+    }).thenAccept(results -> {
+        // All items processed
+        MainThread.execute(() -> {
+            applyResults(results);
+        });
+    });
+}
+
+
+TEMPLATE 6: CANCELLABLE LONG-RUNNING TASK
+------------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this when user has a long task that should be
+ * cancellable (e.g., player logs out, chunk unloads).
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+import com.triutilizer.core.concurrency.Priority;
+import com.triutilizer.core.concurrency.CancellableTask;
+
+public CancellableTask<Result> startLongTask() {
+    CancellableTask<Result> task = TaskManager.submitCancellable(() -> {
+        Result result = new Result();
+        
+        for (int i = 0; i < 1000000; i++) {
+            // Check for cancellation periodically
+            if (Thread.interrupted()) {
+                return result; // Exit early
+            }
+            
+            result.add(processStep(i));
+        }
+        
+        return result;
+    }, Priority.NORMAL);
+    
+    return task;
+}
+
+// Usage:
+// CancellableTask<Result> task = startLongTask();
+// ... later ...
+// task.cancel(); // Stop the task
+
+
+TEMPLATE 7: PARALLEL RANGE PROCESSING
+--------------------------------------
+/**
+ * AI AGENT INSTRUCTION: Use this when user needs to process a numeric range
+ * in parallel (like iterating over coordinates or indices).
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+
+public void processRange(int start, int end) {
+    TaskManager.forRange(start, end, i -> {
+        // Process index i
+        // This automatically splits work across threads
+        processIndex((int) i);
+    }).thenRun(() -> {
+        System.out.println("Range processing complete!");
+    });
+}
+
+
+TEMPLATE 8: ERROR HANDLING
+---------------------------
+/**
+ * AI AGENT INSTRUCTION: Always include error handling in generated code.
+ */
+
+import com.triutilizer.core.concurrency.TaskManager;
+
+public void safeComputation() {
+    TaskManager.submit(() -> {
+        return riskyOperation();
+    }).exceptionally(ex -> {
+        System.err.println("Task failed: " + ex.getMessage());
+        ex.printStackTrace();
+        return getDefaultValue(); // Fallback
+    }).thenAccept(result -> {
+        useResult(result);
+    });
+}
+
+
+================================================================================
+4. VALIDATION CHECKLIST
+================================================================================
+
+BEFORE GENERATING CODE - ASK THESE QUESTIONS:
+----------------------------------------------
+[ ] Does the operation need to be parallel? (Is it CPU-intensive?)
+[ ] Does the code access any game state?
+[ ] If yes, is MainThread.execute() used for ALL game state access?
+[ ] Is the appropriate priority level used?
+[ ] Should the task be cancellable?
+[ ] Is error handling included?
+[ ] Are all imports correct?
+[ ] Is the addon registered in the mod constructor?
+
+
+CODE REVIEW CHECKLIST - VALIDATE GENERATED CODE:
+-------------------------------------------------
+[ ] No direct world/entity access in TaskManager.submit() callbacks
+[ ] MainThread.execute() wraps all game state modifications
+[ ] Imports are complete and correct
+[ ] Priority is appropriate (don't overuse CRITICAL)
+[ ] CompletableFuture chains are properly constructed
+[ ] Exceptions are handled (exceptionally() or try-catch)
+[ ] Thread interruption is checked in long-running tasks
+[ ] No Thread.sleep() or blocking operations in worker threads
+[ ] CancellableTask is used for tasks that should be stoppable
+
+
+THREAD SAFETY VALIDATION:
+--------------------------
+For each line in a TaskManager callback, verify:
+
+    ✓ Pure computation (math, string operations, etc.)
+    ✓ Reading from immutable data structures
+    ✓ Creating new objects
+    ✓ Logging/printing to console
+    ✗ world.setBlock(...)
+    ✗ entity.setPos(...)
+    ✗ level.addFreshEntity(...)
+    ✗ player.inventory.add(...)
+    ✗ server.getLevel(...)
+
+
+================================================================================
+5. COMMON PATTERNS
+================================================================================
+
+PATTERN: Map-Reduce
+-------------------
+When user wants to process data and combine results:
+
+    TaskManager.mapParallel(inputData, item -> {
+        return processItem(item);
+    }).thenApply(results -> {
+        return reduceResults(results);
+    }).thenAccept(finalResult -> {
+        MainThread.execute(() -> {
+            applyFinalResult(finalResult);
+        });
+    });
+
+
+PATTERN: Pipeline
+-----------------
+When user has multi-stage processing:
+
+    TaskManager.submit(() -> {
+        return stage1();
+    }).thenCompose(result1 -> {
+        return TaskManager.submit(() -> stage2(result1));
+    }).thenCompose(result2 -> {
+        return TaskManager.submit(() -> stage3(result2));
+    }).thenAccept(finalResult -> {
+        MainThread.execute(() -> {
+            applyResult(finalResult);
+        });
+    });
+
+
+PATTERN: Fan-Out/Fan-In
+-----------------------
+When user needs to run multiple independent tasks and combine results:
+
+    CompletableFuture<A> taskA = TaskManager.submit(() -> computeA());
+    CompletableFuture<B> taskB = TaskManager.submit(() -> computeB());
+    CompletableFuture<C> taskC = TaskManager.submit(() -> computeC());
+    
+    CompletableFuture.allOf(taskA, taskB, taskC).thenRun(() -> {
+        A a = taskA.join();
+        B b = taskB.join();
+        C c = taskC.join();
+        
+        MainThread.execute(() -> {
+            combineAndApply(a, b, c);
+        });
+    });
+
+
+PATTERN: Conditional Execution
+-------------------------------
+When user needs to run tasks based on conditions:
+
+    TaskManager.submit(() -> {
+        return checkCondition();
+    }).thenCompose(shouldProceed -> {
+        if (shouldProceed) {
+            return TaskManager.submit(() -> expensiveOperation());
+        } else {
+            return CompletableFuture.completedFuture(null);
+        }
+    });
+
+
+PATTERN: Retry Logic
+--------------------
+When user needs to retry failed operations:
+
+    private CompletableFuture<Result> submitWithRetry(int maxRetries) {
+        return TaskManager.submit(() -> {
+            return attemptOperation();
+        }).exceptionally(ex -> {
+            if (maxRetries > 0) {
+                return submitWithRetry(maxRetries - 1).join();
+            } else {
+                throw new RuntimeException("Max retries exceeded", ex);
+            }
+        });
+    }
+
+
+================================================================================
+6. ERROR PREVENTION
+================================================================================
+
+COMMON MISTAKES TO AVOID:
+--------------------------
+
+MISTAKE 1: Direct World Access
+    ✗ WRONG:
+        TaskManager.submit(() -> {
+            world.setBlock(pos, state); // UNSAFE!
+        });
+    
+    ✓ CORRECT:
+        TaskManager.submit(() -> {
+            BlockState state = calculateState();
+            MainThread.execute(() -> {
+                world.setBlock(pos, state);
+            });
+            return state;
+        });
+
+
+MISTAKE 2: Forgetting to Return CompletableFuture
+    ✗ WRONG:
+        public void doWork() {
+            TaskManager.submit(() -> work());
+            // Returns immediately, work not done!
+        }
+    
+    ✓ CORRECT:
+        public CompletableFuture<Void> doWork() {
+            return TaskManager.submit(() -> work());
+        }
+
+
+MISTAKE 3: Blocking in Worker Threads
+    ✗ WRONG:
+        TaskManager.submit(() -> {
+            Thread.sleep(1000); // Wastes worker thread!
+        });
+    
+    ✓ CORRECT:
+        CompletableFuture.delayedExecutor(1, TimeUnit.SECONDS)
+            .execute(() -> TaskManager.run(() -> work()));
+
+
+MISTAKE 4: Not Handling Exceptions
+    ✗ WRONG:
+        TaskManager.submit(() -> riskyOperation());
+    
+    ✓ CORRECT:
+        TaskManager.submit(() -> riskyOperation())
+            .exceptionally(ex -> {
+                handleError(ex);
+                return defaultValue();
+            });
+
+
+MISTAKE 5: Creating Too Many Small Tasks
+    ✗ INEFFICIENT:
+        for (int i = 0; i < 100000; i++) {
+            TaskManager.submit(() -> process(i));
+        }
+    
+    ✓ EFFICIENT:
+        TaskManager.forRange(0, 100000, i -> process(i));
+
+
+================================================================================
+7. TESTING & VERIFICATION
+================================================================================
+
+MANUAL VERIFICATION STEPS:
+---------------------------
+After generating addon code, AI agents should instruct users to:
+
+1. Compile and check for errors
+2. Test with single player world
+3. Test on dedicated server
+4. Check TaskManager.getStats() for proper execution
+5. Verify no ConcurrentModificationException
+6. Check server logs for threading warnings
+
+
+DEBUGGING COMMANDS TO SUGGEST:
+-------------------------------
+If user reports issues, suggest these debugging steps:
+
+    // In-game or console command (if available):
+    /triutilizer stats
+    
+    // Programmatically:
+    TaskManager.Stats stats = TaskManager.getStats();
+    System.out.println("Active: " + stats.active);
+    System.out.println("Queue: " + stats.queueSize);
+    
+    // Enable debug mode:
+    TaskManager.setDebug(true);
+
+
+COMMON SYMPTOMS & SOLUTIONS:
+-----------------------------
+Symptom: ConcurrentModificationException
+Solution: Game state accessed from worker thread - wrap in MainThread.execute()
+
+Symptom: Tasks not executing
+Solution: Check queue size, may need more threads or tasks are blocking
+
+Symptom: NullPointerException in game state
+Solution: Server may not be initialized - check timing of addon initialization
+
+Symptom: Poor performance despite parallelization
+Solution: Too many small tasks - use mapChunked() or forRange()
+
+
+================================================================================
+8. COMPLETE EXAMPLE PROJECTS
+================================================================================
+
+EXAMPLE 1: CHUNK ANALYZER ADDON
+--------------------------------
+/**
+ * This example analyzes chunks in parallel and reports block statistics.
+ * AI AGENT: Use this as reference for chunk-related operations.
+ */
+
+package com.example.chunkanalyzer.integration;
+
+import com.triutilizer.core.compat.TriutilizerAddon;
+import com.triutilizer.core.compat.CompatContext;
+import com.triutilizer.core.concurrency.TaskManager;
+import com.triutilizer.core.util.MainThread;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunk;
+
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+public class ChunkAnalyzerAddon implements TriutilizerAddon {
+    
+    @Override
+    public String id() {
+        return "chunkanalyzer";
+    }
+    
+    @Override
+    public void onRegister(CompatContext ctx) {
+        System.out.println("ChunkAnalyzer registered with Triutilizer");
+    }
+    
+    public void analyzeChunks(ServerLevel level, List<ChunkPos> positions) {
+        TaskManager.mapParallel(positions, chunkPos -> {
+            // Read chunk data (safe - read-only)
+            LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+            return analyzeChunkData(chunk);
+            
+        }).thenAccept(results -> {
+            // Aggregate results
+            Map<String, Integer> totals = new HashMap<>();
+            for (Map<String, Integer> result : results) {
+                result.forEach((key, value) -> 
+                    totals.merge(key, value, Integer::sum)
+                );
+            }
+            
+            // Log results (safe - no game state)
+            System.out.println("Analysis complete: " + totals);
+        });
+    }
+    
+    private Map<String, Integer> analyzeChunkData(LevelChunk chunk) {
+        Map<String, Integer> counts = new HashMap<>();
+        // Analyze chunk blocks
+        // ... implementation ...
+        return counts;
+    }
+}
+
+
+EXAMPLE 2: PATHFINDING OPTIMIZER ADDON
+---------------------------------------
+/**
+ * This example optimizes pathfinding calculations in parallel.
+ * AI AGENT: Use this for AI/pathfinding related tasks.
+ */
+
+package com.example.pathfinder.integration;
+
+import com.triutilizer.core.compat.TriutilizerAddon;
+import com.triutilizer.core.compat.CompatContext;
+import com.triutilizer.core.concurrency.TaskManager;
+import com.triutilizer.core.concurrency.Priority;
+import com.triutilizer.core.concurrency.CancellableTask;
+import com.triutilizer.core.util.MainThread;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Mob;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+public class PathfinderAddon implements TriutilizerAddon {
+    
+    @Override
+    public String id() {
+        return "pathfinder";
+    }
+    
+    @Override
+    public void onRegister(CompatContext ctx) {
+        // No special requirements
+    }
+    
+    public CancellableTask<List<BlockPos>> findPath(
+            BlockPos start, 
+            BlockPos end, 
+            Mob entity) {
+        
+        return TaskManager.submitCancellable(() -> {
+            // Heavy pathfinding calculation
+            List<BlockPos> path = calculatePath(start, end);
+            
+            // Check for cancellation periodically
+            if (Thread.interrupted()) {
+                return null;
+            }
+            
+            return path;
+            
+        }, Priority.HIGH);
+    }
+    
+    public void batchPathfinding(List<Mob> entities, BlockPos target) {
+        TaskManager.mapParallel(entities, entity -> {
+            return calculatePath(entity.blockPosition(), target);
+            
+        }).thenAccept(paths -> {
+            MainThread.execute(() -> {
+                // Apply paths to entities (must be on main thread)
+                for (int i = 0; i < entities.size(); i++) {
+                    applyPath(entities.get(i), paths.get(i));
+                }
+            });
+        });
+    }
+    
+    private List<BlockPos> calculatePath(BlockPos start, BlockPos end) {
+        // Pathfinding algorithm implementation
+        // This is CPU-intensive but doesn't modify game state
+        // ... implementation ...
+        return null; // placeholder
+    }
+    
+    private void applyPath(Mob entity, List<BlockPos> path) {
+        // Apply calculated path to entity
+        // ... implementation ...
+    }
+}
+
+
+EXAMPLE 3: TERRAIN GENERATOR ADDON
+-----------------------------------
+/**
+ * This example generates terrain features in parallel.
+ * AI AGENT: Use this for world generation tasks.
+ */
+
+package com.example.terraingen.integration;
+
+import com.triutilizer.core.compat.TriutilizerAddon;
+import com.triutilizer.core.compat.CompatContext;
+import com.triutilizer.core.concurrency.TaskManager;
+import com.triutilizer.core.util.MainThread;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+
+public class TerrainGenAddon implements TriutilizerAddon {
+    
+    @Override
+    public String id() {
+        return "terraingen";
+    }
+    
+    @Override
+    public void onRegister(CompatContext ctx) {
+        System.out.println("TerrainGen registered");
+    }
+    
+    public CompletableFuture<Void> generateFeature(
+            ServerLevel level, 
+            BlockPos center, 
+            int radius) {
+        
+        return TaskManager.submit(() -> {
+            // Step 1: Calculate which blocks to place (CPU-heavy)
+            Map<BlockPos, BlockState> blocks = new HashMap<>();
+            
+            for (int x = -radius; x <= radius; x++) {
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos pos = center.offset(x, 0, z);
+                    BlockState state = calculateBlockState(pos);
+                    if (state != null) {
+                        blocks.put(pos, state);
+                    }
+                }
+            }
+            
+            return blocks;
+            
+        }).thenAccept(blocks -> {
+            // Step 2: Place blocks (must be on main thread)
+            MainThread.execute(() -> {
+                blocks.forEach((pos, state) -> {
+                    level.setBlock(pos, state, 3);
+                });
+            });
+        });
+    }
+    
+    private BlockState calculateBlockState(BlockPos pos) {
+        // Complex terrain generation logic
+        // ... implementation ...
+        return null; // placeholder
+    }
+}
+
+
+================================================================================
+AI AGENT DECISION TREE
+================================================================================
+
+When user asks for Triutilizer integration, follow this decision tree:
+
+START
+  │
+  ├─ Does task involve heavy computation?
+  │   NO → Suggest regular synchronous code
+  │   YES ↓
+  │
+  ├─ Does task need to access/modify game state?
+  │   NO → Use TaskManager.submit() directly
+  │   YES ↓
+  │       └─ Use TaskManager.submit() + MainThread.execute()
+  │
+  ├─ Is task cancellable (player logout, chunk unload, etc.)?
+  │   YES → Use submitCancellable()
+  │   NO ↓
+  │
+  ├─ Processing a collection?
+  │   YES → Use mapParallel() or mapChunked()
+  │   NO ↓
+  │
+  ├─ Processing a numeric range?
+  │   YES → Use forRange()
+  │   NO ↓
+  │
+  ├─ What priority?
+  │   - Background/cleanup → Priority.LOW
+  │   - Normal game logic → Priority.NORMAL
+  │   - Player-facing → Priority.HIGH
+  │   - Urgent/emergency → Priority.CRITICAL
+  │
+  └─ Generate code using appropriate template
+
+
+================================================================================
+FINAL CHECKLIST FOR AI AGENTS
+================================================================================
+
+Before completing code generation:
+[ ] Verified thread safety (no game state access in workers)
+[ ] Added MainThread.execute() for all game state modifications
+[ ] Included proper imports
+[ ] Added exception handling
+[ ] Used appropriate priority level
+[ ] Generated addon registration code
+[ ] Provided mods.toml dependency snippet
+[ ] Explained to user what the code does
+[ ] Warned user about testing requirements
+
+
+================================================================================
+CONTACT & UPDATES
+================================================================================
+
+This guide is maintained alongside Triutilizer.
+For latest version: https://github.com/Tribulla/Triutilizer
+
+If you're an AI agent encountering issues with this guide, please have your
+user report it to the repository.
+
+================================================================================
+END OF AI AGENT GUIDE
+================================================================================

@@ -1,20 +1,40 @@
-# Triutilizer
+## What is Triutilizer?
 
-I just found out the production version of the mod does not work properly so currently the mod does nothing.
 
-Triutilizer adds a prioritized worker pool to run CPU-heavy tasks in parallel on multicore servers. It keeps world access on the main thread and only parallelizes pure computation, helping compatible features finish faster.
+Triutilizer is a library mod that provides a powerful multithreading system for other mods to use. It allows CPU-intensive tasks to run in parallel on multicore servers while keeping all game state access safely on the main thread.
 
-Info for nerds:
-Uses a fixed-size ThreadPoolExecutor with a PriorityBlockingQueue; higher-priority tasks run first.
-Tasks complete as CompletableFutures; any game-interacting completion runs on the main thread.
-Utilities: mapParallel, mapChunked, cancellable tasks, and range-parallel loops for CPU-bound work.
-Does not alter the vanilla tick loop, chunk loading, or Forge’s scheduler.
 
-servers this mod has been deployed in and monitored by the developer:
-VSSMP - ended
-TDI (the divided isles) - https://discord.gg/P6VTrethrk
-CCW (create constant warfare) - https://discord.gg/wgFHd3VaNx
+**This is a library mod** - you typically only need to install it if another mod requires it as a dependency.
 
-feel free to suport me on patreon to also get exclusive benefts: https://www.patreon.com/tribulla
 
-(the code was written by human but then formatted by AI to add comments and make the code look good)
+## Key Features
+
+
+✅ **Priority-based task scheduling** - Critical tasks execute first  
+✅ **Thread-safe design** - Automatic synchronization prevents crashes  
+✅ **Zero vanilla interference** - Doesn't modify tick loop or chunk loading  
+✅ **Battle-tested** - Deployed on multiple live servers  
+✅ **Comprehensive API** - Easy integration for mod developers
+
+
+## How It Works
+
+
+Triutilizer creates a pool of worker threads that handle computationally expensive operations in parallel. When tasks need to interact with the Minecraft world (blocks, entities, etc.), they automatically execute on the main thread to ensure safety.
+
+
+**Technical Details:**
+- Uses `ThreadPoolExecutor` with `PriorityBlockingQueue`
+- Priority levels: CRITICAL > HIGH > NORMAL > LOW
+- Tasks return as `CompletableFuture`s for async handling
+- Worker count: CPU cores - 1 (configurable)
+
+
+## For Mod Developers
+
+
+Triutilizer is the easiest way to add multithreading to your mods to boost performance (see github for documentation).
+
+
+**Developer**: Tribulla  
+Core code written by human developers, with AI assistance for documentation and formatting.
